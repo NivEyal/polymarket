@@ -1,0 +1,5 @@
+pandas
+numpy
+py-polymarket-clob-client
+requests
+scikit-learn
