@@ -41,8 +41,12 @@ try:
     from py_clob_client.client import ClobClient
     from py_clob_client.clob_types import MarketOrderArgs, OrderType, Side
     from py_clob_client.constants import POLYGON
-except ImportError:
-    print("ERROR: pip install py-clob-client")
+
+except ImportError as e:
+    print("IMPORT ERROR DETAILS:")
+    print(repr(e))
+    print("\nנסה להריץ:")
+    print("pip install py-clob-client")
     sys.exit(1)
 
 # ─────────────────────────────────────────────────────────────────────────────
