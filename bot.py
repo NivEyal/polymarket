@@ -521,20 +521,28 @@ class Reconciler:
 # POLYMARKET EXECUTOR
 # ============================================================
 
+VALID_TICK_SIZES = [0.1, 0.01, 0.001, 0.0001]
+
+def snap_price(price: float, tick: float) -> float:
+    """Round price to nearest valid tick, clamped to [tick, 1-tick]."""
+    snapped = round(round(price / tick) * tick, 10)
+    return max(tick, min(1.0 - tick, snapped))
+
 class PolymarketExecutor:
 
     def __init__(self, private_key: str):
-        user_address = Account.from_key(private_key).address
+        self._address = Account.from_key(private_key).address
+        # Minimal ClobClient — no explicit signature_type/funder.
+        # Overriding these caused order_version_mismatch on some accounts.
+        # SDK defaults: signature_type=EOA(0), funder=signer_address.
         self.client = ClobClient(
             host=CLOB_HOST,
             chain_id=CHAIN_ID,
             key=private_key,
-            signature_type=SIG_EOA,   # 0 = EOA (standard wallet)
-            funder=user_address,
         )
         try:
             self._setup_creds()
-            log.info("CLOB auth OK  address=%s", user_address)
+            log.info("CLOB auth OK  address=%s", self._address)
         except Exception as e:
             log.error("CLOB auth failed: %s", e)
             sys.exit(1)
@@ -556,19 +564,38 @@ class PolymarketExecutor:
             creds = self.client.create_or_derive_api_creds()
             self.client.set_api_creds(creds)
 
+    def _get_tick(self, token_id: str) -> float:
+        """Fetch tick size for token, default 0.01."""
+        try:
+            data = safe_get(f"{CLOB_HOST}/tick-size?token_id={token_id}")
+            if data:
+                return float(data.get("minimum_tick_size", 0.01))
+        except Exception:
+            pass
+        return 0.01
+
     def market_buy_shares(self, token_id: str, shares: float, ask_price: float
                           ) -> tuple[bool, float, float, float, str]:
         """
-        FIX #5: Buy a fixed number of SHARES (not a fixed USDC amount).
-        amount = shares * ask_price gives approximate USDC cost.
+        Buy shares using create_order (limit at ask = immediate fill via FOK).
+        Uses OrderArgs+create_order instead of MarketOrderArgs+create_market_order
+        to avoid order_version_mismatch errors.
         Returns (is_filled, filled_shares, avg_price, actual_cost_usdc, order_id).
         """
-        amount_usdc = shares * ask_price
-        log.info("BUY token=%s shares=%.2f ask=%.4f usdc≈%.2f",
-                 token_id, shares, ask_price, amount_usdc)
+        tick  = self._get_tick(token_id)
+        price = snap_price(ask_price, tick)
+        amount_usdc = round(shares * price, 4)
+
+        log.info("BUY token=%s shares=%.2f price=%.4f tick=%.4f usdc=%.4f",
+                 token_id, shares, price, tick, amount_usdc)
         try:
-            args    = MarketOrderArgs(token_id=token_id, amount=amount_usdc, side="BUY")
-            signed  = self.client.create_market_order(args)
+            args   = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=shares,
+                side="BUY",
+            )
+            signed  = self.client.create_order(args)
             receipt = self.client.post_order(signed, OrderType.FOK)
             log.info("BUY receipt: %s", json.dumps(receipt, default=str))
         except Exception as e:
@@ -576,16 +603,35 @@ class PolymarketExecutor:
             return False, 0.0, 0.0, 0.0, ""
 
         order_id = str(receipt.get("orderID") or receipt.get("id") or "")
-        is_filled, filled, price, cost = parse_fill(receipt, amount_usdc, is_buy=True)
-        return is_filled, filled, price, cost, order_id
+        is_filled, filled, avg_p, cost = parse_fill(receipt, amount_usdc, is_buy=True)
+        return is_filled, filled, avg_p, cost, order_id
 
     def market_sell(self, token_id: str, shares: float
                     ) -> tuple[bool, float, float, str]:
-        """Returns (is_filled, filled_shares, avg_price, order_id)."""
-        log.info("SELL token=%s shares=%.4f", token_id, shares)
+        """
+        Sell shares using create_order at best bid (limit at bid = immediate FOK fill).
+        Returns (is_filled, filled_shares, avg_price, order_id).
+        """
+        tick = self._get_tick(token_id)
+        bid_price = 0.5
         try:
-            args    = MarketOrderArgs(token_id=token_id, amount=shares, side="SELL")
-            signed  = self.client.create_market_order(args)
+            book = self.client.get_order_book(token_id)
+            if book and book.bids:
+                bid_price = float(book.bids[0].price)
+        except Exception:
+            pass
+        price = snap_price(bid_price, tick)
+
+        log.info("SELL token=%s shares=%.4f price=%.4f tick=%.4f",
+                 token_id, shares, price, tick)
+        try:
+            args   = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=shares,
+                side="SELL",
+            )
+            signed  = self.client.create_order(args)
             receipt = self.client.post_order(signed, OrderType.FOK)
             log.info("SELL receipt: %s", json.dumps(receipt, default=str))
         except Exception as e:
@@ -593,8 +639,8 @@ class PolymarketExecutor:
             return False, 0.0, 0.0, ""
 
         order_id = str(receipt.get("orderID") or receipt.get("id") or "")
-        is_filled, filled, price, _ = parse_fill(receipt, shares, is_buy=False)
-        return is_filled, filled, price, order_id
+        is_filled, filled, avg_p, _ = parse_fill(receipt, shares, is_buy=False)
+        return is_filled, filled, avg_p, order_id
 
 # ============================================================
 # STATE PERSISTENCE
