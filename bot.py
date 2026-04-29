@@ -525,21 +525,74 @@ class Reconciler:
 VALID_TICK_SIZES = [0.1, 0.01, 0.001, 0.0001]
 
 def snap_price(price: float, tick: float) -> float:
-    """Round price to nearest valid tick, clamped to [tick, 1-tick]."""
     snapped = round(round(price / tick) * tick, 10)
     return max(tick, min(1.0 - tick, snapped))
+
+
+def _detect_proxy_wallet(eoa_address: str):
+    """Query Polymarket proxy factory on Polygon for the proxy wallet address.
+    Polymarket web-UI accounts use a proxy wallet (sig_type=1).
+    Returns proxy address string, or None if not found."""
+    override = os.environ.get('POLY_FUNDER', '').strip()
+    if override:
+        log.info("Using POLY_FUNDER override: %s", override)
+        return override
+
+    FACTORY = '0xaB45c5A4B0c941a2F231C04C3f49182e1A254052'
+    RPCS = [
+        'https://polygon-rpc.com',
+        'https://rpc.ankr.com/polygon',
+        'https://polygon-mainnet.public.blastapi.io',
+        'https://1rpc.io/matic',
+    ]
+    padded = eoa_address.lower().replace('0x', '').zfill(64)
+    SELECTORS = ['6f7c37f3', '193c1f76', 'b9f14c40', 'f3f43703', 'a6d6dd01']
+    zero_addr = '0x' + '0' * 40
+    for rpc in RPCS:
+        for sel in SELECTORS:
+            data = f'0x{sel}{padded}'
+            payload = {'jsonrpc':'2.0','method':'eth_call',
+                       'params':[{'to': FACTORY,'data': data},'latest'],'id':1}
+            try:
+                r = requests.post(rpc, json=payload, timeout=6,
+                                  headers={'Content-Type':'application/json'})
+                result = r.json().get('result', '')
+                if result and len(result) >= 42:
+                    addr = '0x' + result[-40:]
+                    if addr.lower() != zero_addr:
+                        log.info("Proxy wallet detected: %s (rpc=%s sel=%s)", addr, rpc, sel)
+                        return addr
+            except Exception:
+                pass
+    log.info("No proxy wallet found — using sig_type=0 (EOA)")
+    return None
+
 
 class PolymarketExecutor:
 
     def __init__(self, private_key: str):
         self._address = Account.from_key(private_key).address
-        # Minimal ClobClient — no explicit signature_type/funder.
-        # Overriding these caused order_version_mismatch on some accounts.
-        # SDK defaults: signature_type=EOA(0), funder=signer_address.
+
+        env_sig = os.environ.get('POLY_SIG_TYPE', '').strip()
+        if env_sig in ('0', '1', '2'):
+            self._sig_type = int(env_sig)
+            proxy = os.environ.get('POLY_FUNDER', '').strip() or None
+            self._funder = proxy or self._address
+            log.info("Auth: POLY_SIG_TYPE=%d funder=%s (env override)", self._sig_type, self._funder)
+        else:
+            proxy = _detect_proxy_wallet(self._address)
+            if proxy:
+                self._sig_type = 1
+                self._funder = proxy
+                log.info("Auth: sig_type=1 (proxy) funder=%s", proxy)
+            else:
+                self._sig_type = SIG_EOA
+                self._funder = self._address
+                log.info("Auth: sig_type=0 (EOA) funder=%s", self._address)
+
         self.client = ClobClient(
-            host=CLOB_HOST,
-            chain_id=CHAIN_ID,
-            key=private_key,
+            host=CLOB_HOST, chain_id=CHAIN_ID, key=private_key,
+            signature_type=self._sig_type, funder=self._funder,
         )
         try:
             self._setup_creds()
@@ -550,14 +603,12 @@ class PolymarketExecutor:
         self.reconciler = Reconciler(self.client)
 
     def _setup_creds(self):
-        api_key        = os.environ.get("CLOB_API_KEY",        "").strip()
-        api_secret     = os.environ.get("CLOB_API_SECRET",     "").strip()
-        api_passphrase = os.environ.get("CLOB_API_PASSPHRASE", "").strip()
+        api_key        = os.environ.get('CLOB_API_KEY',        '').strip()
+        api_secret     = os.environ.get('CLOB_API_SECRET',     '').strip()
+        api_passphrase = os.environ.get('CLOB_API_PASSPHRASE', '').strip()
         if api_key and api_secret and api_passphrase:
             self.client.set_api_creds(ApiCreds(
-                api_key=api_key,
-                api_secret=api_secret,
-                api_passphrase=api_passphrase,
+                api_key=api_key, api_secret=api_secret, api_passphrase=api_passphrase,
             ))
             log.info("Auth: explicit API creds from env vars")
         else:
@@ -566,53 +617,47 @@ class PolymarketExecutor:
             self.client.set_api_creds(creds)
 
     def _get_tick(self, token_id: str) -> float:
-        """Fetch tick size for token, default 0.01."""
         try:
-            data = safe_get(f"{CLOB_HOST}/tick-size?token_id={token_id}")
+            data = safe_get(f'{CLOB_HOST}/tick-size?token_id={token_id}')
             if data:
-                return float(data.get("minimum_tick_size", 0.01))
+                return float(data.get('minimum_tick_size', 0.01))
         except Exception:
             pass
         return 0.01
 
     def market_buy_shares(self, token_id: str, shares: float, ask_price: float
                           ) -> tuple[bool, float, float, float, str]:
-        """
-        Buy shares using create_order (limit at ask = immediate fill via FOK).
-        Uses OrderArgs+create_order instead of MarketOrderArgs+create_market_order
-        to avoid order_version_mismatch errors.
-        Returns (is_filled, filled_shares, avg_price, actual_cost_usdc, order_id).
-        """
+        """Buy shares via create_order+FOK. Returns (filled, shares, price, cost, order_id)."""
         tick  = self._get_tick(token_id)
         price = snap_price(ask_price, tick)
         amount_usdc = round(shares * price, 4)
-
-        log.info("BUY token=%s shares=%.2f price=%.4f tick=%.4f usdc=%.4f",
-                 token_id, shares, price, tick, amount_usdc)
+        log.info("BUY sig=%d funder=%s token=%s shares=%.2f price=%.4f usdc=%.4f",
+                 self._sig_type, self._funder[:10], token_id[:12], shares, price, amount_usdc)
         try:
-            args   = OrderArgs(
-                token_id=token_id,
-                price=price,
-                size=shares,
-                side="BUY",
-            )
+            args   = OrderArgs(token_id=token_id, price=price, size=shares, side='BUY')
             signed  = self.client.create_order(args)
             receipt = self.client.post_order(signed, OrderType.FOK)
             log.info("BUY receipt: %s", json.dumps(receipt, default=str))
         except Exception as e:
-            log.error("BUY exception: %s", e)
-            return False, 0.0, 0.0, 0.0, ""
+            err = str(e)
+            if 'order_version_mismatch' in err:
+                log.error(
+                    "order_version_mismatch: your account uses a PROXY wallet.\n"
+                    "Add env vars and restart:\n"
+                    "  POLY_SIG_TYPE=1\n"
+                    "  POLY_FUNDER=<proxy_address>\n"
+                    "Find proxy: polymarket.com -> DevTools (F12) -> Network -> any request -> look for maker field"
+                )
+            else:
+                log.error("BUY exception: %s", e)
+            return False, 0.0, 0.0, 0.0, ''
 
-        order_id = str(receipt.get("orderID") or receipt.get("id") or "")
+        order_id = str(receipt.get('orderID') or receipt.get('id') or '')
         is_filled, filled, avg_p, cost = parse_fill(receipt, amount_usdc, is_buy=True)
         return is_filled, filled, avg_p, cost, order_id
 
-    def market_sell(self, token_id: str, shares: float
-                    ) -> tuple[bool, float, float, str]:
-        """
-        Sell shares using create_order at best bid (limit at bid = immediate FOK fill).
-        Returns (is_filled, filled_shares, avg_price, order_id).
-        """
+    def market_sell(self, token_id: str, shares: float) -> tuple[bool, float, float, str]:
+        """Sell shares via create_order+FOK at best bid."""
         tick = self._get_tick(token_id)
         bid_price = 0.5
         try:
@@ -622,24 +667,18 @@ class PolymarketExecutor:
         except Exception:
             pass
         price = snap_price(bid_price, tick)
-
-        log.info("SELL token=%s shares=%.4f price=%.4f tick=%.4f",
-                 token_id, shares, price, tick)
+        log.info("SELL sig=%d token=%s shares=%.4f price=%.4f",
+                 self._sig_type, token_id[:12], shares, price)
         try:
-            args   = OrderArgs(
-                token_id=token_id,
-                price=price,
-                size=shares,
-                side="SELL",
-            )
+            args   = OrderArgs(token_id=token_id, price=price, size=shares, side='SELL')
             signed  = self.client.create_order(args)
             receipt = self.client.post_order(signed, OrderType.FOK)
             log.info("SELL receipt: %s", json.dumps(receipt, default=str))
         except Exception as e:
             log.error("SELL exception: %s", e)
-            return False, 0.0, 0.0, ""
+            return False, 0.0, 0.0, ''
 
-        order_id = str(receipt.get("orderID") or receipt.get("id") or "")
+        order_id = str(receipt.get('orderID') or receipt.get('id') or '')
         is_filled, filled, avg_p, _ = parse_fill(receipt, shares, is_buy=False)
         return is_filled, filled, avg_p, order_id
 
