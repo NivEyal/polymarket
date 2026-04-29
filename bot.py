@@ -42,6 +42,7 @@ try:
     from py_clob_client.clob_types import (
         ApiCreds,
         MarketOrderArgs,
+        OrderArgs,
         OrderType,
     )
     from py_clob_client.constants import POLYGON
