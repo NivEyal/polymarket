@@ -1,5 +1,4 @@
-pandas
-numpy
-py-polymarket-clob-client
-requests
-scikit-learn
+py-clob-client>=0.14.0
+requests>=2.31.0
+pandas>=2.1.0
+numpy>=1.26.0
