@@ -4,3 +4,4 @@ pandas>=2.1.0
 numpy>=1.26.0
 web3
 eth-account
+websocket-client>=1.6.0
