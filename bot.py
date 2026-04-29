@@ -574,7 +574,7 @@ class PolymarketExecutor:
         self._address = Account.from_key(private_key).address
 
         # FORCE PROXY WALLET - Polymarket account
-        self._sig_type = 1
+        self._sig_type = 2
         self._funder = "0x96c57a30082ddefee59ecd41d11642c6ecc8dcb0"
 
         log.info(
