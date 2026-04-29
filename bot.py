@@ -567,7 +567,7 @@ class PolymarketExecutor:
         log.info("BUY token=%s shares=%.2f ask=%.4f usdc≈%.2f",
                  token_id, shares, ask_price, amount_usdc)
         try:
-            args    = MarketOrderArgs(token_id=token_id, amount=amount_usdc)
+            args    = MarketOrderArgs(token_id=token_id, amount=amount_usdc, side="BUY")
             signed  = self.client.create_market_order(args)
             receipt = self.client.post_order(signed, OrderType.FOK)
             log.info("BUY receipt: %s", json.dumps(receipt, default=str))
