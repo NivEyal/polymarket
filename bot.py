@@ -48,7 +48,16 @@ except ImportError as e:
     print("\nנסה להריץ:")
     print("pip install py-clob-client")
     sys.exit(1)
+from dotenv import load_dotenv
 
+# הפקודה שחובה להוסיף כדי שהקוד יקרא את הקובץ
+load_dotenv() 
+
+# עכשיו הקוד יוכל למשוך את ה-PK
+pk = os.getenv("PK")
+
+if pk is None:
+    print("ERROR: PK env var not set. Check your .env file!")
 # ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
