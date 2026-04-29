@@ -299,24 +299,18 @@ class Reconciler:
         self.client = client
 
     def get_balance(self) -> float:
-        """
-        FIX D: defensively handle any return type from get_balance().
-        The library might return a dict, a string, or a float.
-        """
         try:
-            raw = self.client.get_balance()
-            # dict with a 'balance' key
-            if isinstance(raw, dict):
-                for key in ("balance", "usdc", "collateral", "amount"):
-                    v = raw.get(key)
-                    if v is not None:
-                        return float(v)
-                log.warning("get_balance returned dict with unknown schema: %s", raw)
-                return np.nan
+            # בגרסאות חדשות זה נקרא get_collateral_balance
+            raw = self.client.get_collateral_balance() 
             return float(raw)
-        except Exception as e:
-            log.warning("get_balance: %s", e)
-            return np.nan
+        except AttributeError:
+            # אם גם זה לא עובד, ננסה את הגרסה הישנה
+            try:
+                raw = self.client.get_balance()
+                return float(raw)
+            except Exception as e:
+                log.warning("Could not get balance: %s", e)
+                return np.nan
 
     def get_position_size(self, token_id: str) -> float:
         try:
