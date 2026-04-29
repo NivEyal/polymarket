@@ -49,9 +49,9 @@ log = logging.getLogger("btc5m")
 # CONFIG
 # ============================================================
 
-START_BALANCE   = float(os.environ.get("START_BALANCE", "100"))
+START_BALANCE   = float(os.environ.get("START_BALANCE", "3235"))
 STATE_FILE      = os.environ.get("STATE_FILE", "bot_state.json")
-RUN_HOURS       = float(os.environ.get("RUN_HOURS", "12"))
+RUN_HOURS       = float(os.environ.get("RUN_HOURS", "24"))
 RUN_MINUTES     = int(RUN_HOURS * 60)
 
 RISK_PCT        = 0.05   # fixed 5%
