@@ -39,7 +39,7 @@ from pathlib import Path
 
 try:
     from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import MarketOrderArgs, OrderType, Side
+    from py_clob_client.clob_types import MarketOrderArgs, OrderType
     from py_clob_client.constants import POLYGON
 
 except ImportError as e:
@@ -338,7 +338,7 @@ class PolymarketExecutor:
         """
         log.info("SELL token=%s shares=%.4f", token_id, shares)
         try:
-            args    = MarketOrderArgs(token_id=token_id, amount=shares, side=Side.SELL)
+            args    = MarketOrderArgs(token_id=token_id, amount=shares, side="SELL")
             signed  = self.client.create_market_order(args)
             receipt = self.client.post_order(signed, OrderType.FOK)
             log.info("SELL receipt: %s", json.dumps(receipt, default=str))
