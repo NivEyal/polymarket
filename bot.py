@@ -49,18 +49,35 @@ except ImportError as e:
     print("pip install py-clob-client")
     sys.exit(1)
 # ייבוא נוסף שצריך להוסיף למעלה (אם לא קיים)
+# 1. וודא שהייבוא הזה קיים בראש הקובץ:
 from py_clob_client.clob_types import SignatureType
 
+# 2. בתוך ה-class PolymarketExecutor, שנה את ה-init ככה:
 class PolymarketExecutor:
+
     def __init__(self, private_key: str):
         self.client = ClobClient(
             host=CLOB_HOST, 
             chain_id=CHAIN_ID, 
             key=private_key,
-            # הווסף את השורה הזו:
-            signature_type=SignatureType.EOA 
+            # התיקון כאן:
+            signature_type=SignatureType.EOA,
+            funder=self._get_address_from_pk(private_key)
         )
-        # ... שאר הקוד  
+        try:
+            creds = self.client.create_or_derive_api_creds()
+            self.client.set_api_creds(creds)
+            log.info("CLOB auth OK  address=%s", self.client.get_address())
+        except Exception as e:
+            log.error("CLOB auth failed: %s", e)
+            sys.exit(1)
+
+        self.reconciler = Reconciler(self.client)
+
+    # הוסף את הפונקציה הקטנה הזו כדי לעזור לבוט לזהות את הכתובת שלך
+    def _get_address_from_pk(self, pk):
+        from eth_account import Account
+        return Account.from_key(pk).address
 from dotenv import load_dotenv
 
 # הפקודה שחובה להוסיף כדי שהקוד יקרא את הקובץ
