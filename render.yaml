@@ -1,16 +1,1 @@
-services:
-  - type: worker                  # background process, no HTTP port needed
-    name: btc5m-live-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-    plan: starter                 # $7/mo — upgrade to standard for uptime SLA
-    autoDeploy: true
 
-    envVars:
-      - key: PK
-        sync: false               # you paste the value in Render dashboard (secret)
-      - key: START_BALANCE
-        value: "100"
-      - key: RUN_HOURS
-        value: "12"
