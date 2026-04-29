@@ -43,9 +43,14 @@ try:
         ApiCreds,
         MarketOrderArgs,
         OrderType,
-        SignatureType,
     )
     from py_clob_client.constants import POLYGON
+    # SignatureType does not exist as an Enum in v0.34.x —
+    # the raw integer 0 means EOA (standard wallet signature)
+    try:
+        from py_clob_client.order_builder.builder import EOA as SIG_EOA
+    except ImportError:
+        SIG_EOA = 0   # fallback: hardcoded EOA value
 except ImportError as e:
     print(f"IMPORT ERROR: {e}\nRun: pip install py-clob-client")
     sys.exit(1)
@@ -524,7 +529,7 @@ class PolymarketExecutor:
             host=CLOB_HOST,
             chain_id=CHAIN_ID,
             key=private_key,
-            signature_type=SignatureType.EOA,
+            signature_type=SIG_EOA,   # 0 = EOA (standard wallet)
             funder=user_address,
         )
         try:
