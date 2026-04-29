@@ -65,14 +65,14 @@ START_BALANCE   = float(os.environ.get("START_BALANCE", "3235"))
 STATE_FILE      = os.environ.get("STATE_FILE", "bot_state.json")
 RUN_HOURS       = float(os.environ.get("RUN_HOURS", "24"))
 RUN_MINUTES     = int(RUN_HOURS * 60)
-ALLOW_REENTRY   = os.environ.get("ALLOW_REENTRY", "0") == "1"
+ALLOW_REENTRY   = True
 
 RISK_PCT        = 0.05   # fixed 5%
 
 ENTRY_TIME_MIN  = 25
 ENTRY_TIME_MAX  = 71
 ENTRY_PRICE_MIN = 0.14
-ENTRY_PRICE_MAX = 0.26
+ENTRY_PRICE_MAX = 0.45
 
 EXIT_TIME_MIN   = 47
 EXIT_TIME_MAX   = 267
@@ -422,16 +422,16 @@ def get_prices(up_token: str, down_token: str) -> dict | None:
         "down_sell": clamp_price(data.get(down_token, {}).get("SELL")),
     }
 
-def choose_entry(prices: dict) -> str | None:
-    ub, db = prices["up_buy"], prices["down_buy"]
-    up_ok   = ENTRY_PRICE_MIN <= ub <= ENTRY_PRICE_MAX
-    down_ok = ENTRY_PRICE_MIN <= db <= ENTRY_PRICE_MAX
-    if not up_ok and not down_ok:
-        return None
-    if up_ok and down_ok:
-        return "up" if ub <= db else "down"
-    return "up" if up_ok else "down"
+def choose_entry(prices):
+    up = prices["up_buy"]
+    down = prices["down_buy"]
+    return "up" if up < down else "down"
 
+    spread = abs(up - down)
+    if spread > 0.75:
+      return None
+    return "up" if up < down else "down"  
+    
 # ============================================================
 # LIVE BOT
 # ============================================================
@@ -670,7 +670,7 @@ class LiveBot:
         if self.position is not None:
             return events   # still in position
 
-        if not (ENTRY_TIME_MIN <= sec <= ENTRY_TIME_MAX):
+        if sec < 5:
             return events
 
         # FIX E: block re-entry in same candle unless explicitly allowed
