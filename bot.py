@@ -48,6 +48,19 @@ except ImportError as e:
     print("\nנסה להריץ:")
     print("pip install py-clob-client")
     sys.exit(1)
+# ייבוא נוסף שצריך להוסיף למעלה (אם לא קיים)
+from py_clob_client.clob_types import SignatureType
+
+class PolymarketExecutor:
+    def __init__(self, private_key: str):
+        self.client = ClobClient(
+            host=CLOB_HOST, 
+            chain_id=CHAIN_ID, 
+            key=private_key,
+            # הווסף את השורה הזו:
+            signature_type=SignatureType.EOA 
+        )
+        # ... שאר הקוד  
 from dotenv import load_dotenv
 
 # הפקודה שחובה להוסיף כדי שהקוד יקרא את הקובץ
