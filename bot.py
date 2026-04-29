@@ -61,7 +61,7 @@ try:
 except ImportError:
     print("IMPORT ERROR: eth_account\nRun: pip install eth-account")
     sys.exit(1)
-
+print("RUNNING FIXED BOT FILE!!!")
 # ============================================================
 # LOGGING — console + file (#6 logs.txt)
 # ============================================================
